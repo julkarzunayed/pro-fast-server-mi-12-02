@@ -67,14 +67,12 @@ async function run() {
             }
         };
 
-        const verifyEmail = async (req, res, next) => {
+        const verifyEmail = (req, res, next) => {
             if (!req.decoded.email === req.query.userEmail) {
                 return res.status(403).send({ message: 'forbidden access' });
-            }
-            else {
+            } else {
                 next();
             }
-
         }
 
         app.post('/users', async (req, res) => {
@@ -90,7 +88,6 @@ async function run() {
             const result = await usersCollection.insertOne(user);
             res.send(result);
         });
-
         // Rider related API
         app.get('/riders', async (req, res) => {
             try {
@@ -105,7 +102,7 @@ async function run() {
                 console.error("Error retrieving parcels:", err);
                 res.status(500).json({ message: "Failed to retrieve parcels.", error: err.message });
             }
-        })
+        });
 
         app.post('/riders', async (req, res) => {
             try {
@@ -117,6 +114,37 @@ async function run() {
                 res.status(500).json({ message: "Failed to retrieve parcels.", error: err.message });
             }
         });
+
+        // PATCH API: Update rider status
+        app.patch('/riders/:id', async (req, res) => {
+            try {
+
+                const riderId = req.params.id;
+                const { status } = req.body; // Get the 'status' from the request body
+                console.log(riderId, status)
+                // Validate the new status
+                const allowedStatuses = ['available', 'on_delivery', 'offline', 'unavailable'];
+
+                const objectId = new ObjectId(riderId);
+
+                // Update the rider's status
+                const updateResult = await ridersCollection.updateOne(
+                    { _id: objectId }, // Filter by rider ID
+                    {
+                        $set: {
+                            status: status,
+                            updated_at: new Date() // Update the timestamp
+                        }
+                    },
+                );
+                res.send(updateResult);
+
+            } catch (error) {
+                console.error("Error updating rider status:", error);
+                res.status(500).json({ message: "Failed to update rider status.", error: error.message });
+            }
+        });
+
 
         // GET API: Retrieve parcels, with optional user email query and latest first
         app.get('/parcels', verifyFBToken, verifyEmail, async (req, res) => {
