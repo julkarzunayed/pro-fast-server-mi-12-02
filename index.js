@@ -73,7 +73,71 @@ async function run() {
             } else {
                 next();
             }
+        };
+
+        const verifyAdmin = async (req, res, next) => {
+            const email = req.decoded.email;
+            const query = { email };
+            const user = await usersCollection.findOne(query);
+            if (!user || user.role !== 'admin') {
+                return res.status(403).send({ message: 'forbidden access' });
+            }
+            next();
         }
+
+        app.get("/users/search", verifyFBToken, verifyAdmin, async (req, res) => {
+            const emailQuery = req.query.email;
+            if (!emailQuery) {
+                return res.status(400).send({ message: "Missing email query" });
+            }
+
+            const regex = new RegExp(emailQuery, "i"); // case-insensitive partial match
+            try {
+                const users = await usersCollection
+                    .find({ email: { $regex: regex } })
+                    // .project({ email: 1, createdAt: 1, role: 1 })
+                    .limit(10)
+                    .toArray();
+                res.send(users);
+            } catch (error) {
+                console.error("Error searching users", error);
+                res.status(500).send({ message: "Error searching users" });
+            }
+        });
+
+        // GET API: Get user role by email
+        app.post('/users/role', verifyFBToken, async (req, res) => {
+            try {
+                if (!usersCollection) {
+                    return res.status(503).json({ message: "Database not connected or 'usersCollection' not initialized yet." });
+                }
+
+                const userEmail = req.body.email; // Get email from query parameters
+                // Input validation: Ensure email is provided
+                if (!userEmail) {
+                    return res.status(400).json({ message: "Email query parameter is required." });
+                }
+
+                // Find the user by email
+                // .project({ role: 1, _id: 0 }) ensures only the 'role' field is returned, and '_id' is excluded
+                const user = await usersCollection.findOne(
+                    { email: userEmail },
+                    { projection: { role: 1, _id: 0 } } // Project only the 'role' field, exclude '_id'
+                );
+
+                // Check if user was found
+                if (!user) {
+                    return res.status(404).json({ message: "User not found with the provided email." });
+                }
+
+                // Return the user's role
+                res.status(200).json(user); // 'user' object will now contain just { role: "admin" } or { role: "user" }
+
+            } catch (error) {
+                console.error("Error retrieving user role:", error);
+                res.status(500).json({ message: "Failed to retrieve user role.", error: error.message });
+            }
+        });
 
         app.post('/users', async (req, res) => {
             const email = req.body.email;
@@ -88,6 +152,35 @@ async function run() {
             const result = await usersCollection.insertOne(user);
             res.send(result);
         });
+
+        app.patch('/users/:id/role', verifyFBToken, verifyAdmin, async (req, res) => {
+            try {
+
+                const userId = req.params.id;
+                const { role } = req.body; // Get the 'status' from the request body
+                // console.log(riderId, status)
+                // Validate the new status
+
+                const objectId = new ObjectId(userId);
+
+                // Update the rider's status
+                const updateResult = await usersCollection.updateOne(
+                    { _id: objectId }, // Filter by user ID
+                    {
+                        $set: {
+                            role: role,
+                            updated_at: new Date() // Update the timestamp
+                        }
+                    },
+                );
+                res.send(updateResult);
+
+            } catch (error) {
+                console.error("Error updating rider status:", error);
+                res.status(500).json({ message: "Failed to update rider status.", error: error.message });
+            }
+        })
+
         // Rider related API
         app.get('/riders', async (req, res) => {
             try {
@@ -116,12 +209,12 @@ async function run() {
         });
 
         // PATCH API: Update rider status
-        app.patch('/riders/:id', async (req, res) => {
+        app.patch('/riders/:id', verifyFBToken, verifyAdmin, async (req, res) => {
             try {
 
                 const riderId = req.params.id;
-                const { status } = req.body; // Get the 'status' from the request body
-                console.log(riderId, status)
+                const { status, email } = req.body; // Get the 'status' from the request body
+                // console.log(riderId, status)
                 // Validate the new status
                 const allowedStatuses = ['available', 'on_delivery', 'offline', 'unavailable'];
 
@@ -137,6 +230,18 @@ async function run() {
                         }
                     },
                 );
+                if (status === 'active' && updateResult.modifiedCount) {
+                    const updateUser = await usersCollection.updateOne(
+                        { email },
+                        {
+                            $set: {
+                                role: 'rider',
+                                updated_at: new Date().toISOString(),
+                            }
+                        },
+                        { upsert: true }
+                    )
+                }
                 res.send(updateResult);
 
             } catch (error) {
@@ -147,7 +252,7 @@ async function run() {
 
 
         // GET API: Retrieve parcels, with optional user email query and latest first
-        app.get('/parcels', verifyFBToken, verifyEmail, async (req, res) => {
+        app.get('/parcels', verifyFBToken, async (req, res) => {
             try {
                 // console.log(req.decoded)
                 if (!parcelsCollection) {
