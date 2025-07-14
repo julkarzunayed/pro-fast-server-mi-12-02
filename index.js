@@ -79,6 +79,7 @@ async function run() {
             const email = req.decoded.email;
             const query = { email };
             const user = await usersCollection.findOne(query);
+            console.log(user)
             if (!user || user.role !== 'admin') {
                 return res.status(403).send({ message: 'forbidden access' });
             }
@@ -184,10 +185,13 @@ async function run() {
         // Rider related API
         app.get('/riders', async (req, res) => {
             try {
-                const status = req.query?.status
+                const {status, wire_house} = req.query
                 const query = {}
                 if (status) {
                     query.status = status;
+                }
+                if(wire_house){
+                    query.wire_house = wire_house;
                 }
                 const result = await ridersCollection.find(query).toArray();
                 res.send(result);
@@ -279,6 +283,35 @@ async function run() {
 
             } catch (error) {
                 console.error("Error retrieving parcels:", error);
+                res.status(500).json({ message: "Failed to retrieve parcels.", error: error.message });
+            }
+        });
+
+        // --- NEW API ENDPOINT: Get Paid and Not Collected Parcels ---
+        app.get('/parcels/byStatus', async (req, res) => {
+            try {
+                if (!parcelsCollection) {
+                    return res.status(503).json({ message: "Database not connected or 'parcelCollections' not initialized yet." });
+                }
+                const { payment_status, delivery_status } = req.query;
+
+                let query = {}
+
+                if(payment_status){
+                    query.payment_status= payment_status;
+                };
+                
+                if(delivery_status){
+                    query.delivery_status= delivery_status;
+                }
+
+                // Find documents matching both conditions, sorted by creation date (latest first)
+                const parcels = await parcelsCollection.find(query).sort({ createdAt: -1 }).toArray();
+
+                res.status(200).json(parcels);
+
+            } catch (error) {
+                console.error("Error retrieving paid and not collected parcels:", error);
                 res.status(500).json({ message: "Failed to retrieve parcels.", error: error.message });
             }
         });
