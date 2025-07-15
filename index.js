@@ -123,7 +123,7 @@ async function run() {
                 // .project({ role: 1, _id: 0 }) ensures only the 'role' field is returned, and '_id' is excluded
                 const user = await usersCollection.findOne(
                     { email: userEmail },
-                    { projection: { role: 1, _id: 0 } } // Project only the 'role' field, exclude '_id'
+                    // { projection: { role: 1, _id: 0 } } // Project only the 'role' field, exclude '_id'
                 );
 
                 // Check if user was found
@@ -185,12 +185,12 @@ async function run() {
         // Rider related API
         app.get('/riders', async (req, res) => {
             try {
-                const {status, wire_house} = req.query
+                const { status, wire_house } = req.query
                 const query = {}
                 if (status) {
                     query.status = status;
                 }
-                if(wire_house){
+                if (wire_house) {
                     query.wire_house = wire_house;
                 }
                 const result = await ridersCollection.find(query).toArray();
@@ -297,22 +297,54 @@ async function run() {
 
                 let query = {}
 
-                if(payment_status){
-                    query.payment_status= payment_status;
+                if (payment_status) {
+                    query.payment_status = payment_status;
                 };
-                
-                if(delivery_status){
-                    query.delivery_status= delivery_status;
+
+                if (delivery_status) {
+                    query.delivery_status = delivery_status;
                 }
 
                 // Find documents matching both conditions, sorted by creation date (latest first)
-                const parcels = await parcelsCollection.find(query).sort({ createdAt: -1 }).toArray();
+                const parcels = await parcelsCollection.find(query).sort({ payment_time: -1 }).toArray();
 
                 res.status(200).json(parcels);
 
             } catch (error) {
                 console.error("Error retrieving paid and not collected parcels:", error);
                 res.status(500).json({ message: "Failed to retrieve parcels.", error: error.message });
+            }
+        });
+
+        app.get('/parcels/rider/:riderId/assigned', async (req, res) => {
+            try {
+                if (!parcelsCollection) {
+                    return res.status(503).json({ message: "Database not connected or 'parcelsCollection' not initialized yet." });
+                }
+                const riderId = req.params.riderId;
+                const queryForUser = { _id: new ObjectId(riderId) };
+                const user = await usersCollection.findOne(queryForUser);
+                console.log(riderId)
+
+                // Construct the query
+                const query = {
+                    assign_rider_email: user.email,
+                    delivery_status: { $in: ['rider_assign', 'in_transit'] } // Match either status
+                };
+
+                // Find parcels matching the query, sorted by creation date (latest first)
+                const parcels = await parcelsCollection.find(query).sort({ createdAt: -1 }).toArray();
+
+                // If no parcels are found, return 404
+                if (parcels.length === 0) {
+                    return res.status(404).json({ message: "No parcels found for this rider with 'rider_assign' or 'in_transit' status." });
+                }
+
+                res.status(200).json(parcels);
+
+            } catch (error) {
+                console.error("Error retrieving assigned parcels for rider:", error);
+                res.status(500).json({ message: "Failed to retrieve assigned parcels.", error: error.message });
             }
         });
 
@@ -399,6 +431,118 @@ async function run() {
                 res.status(500).json({ message: "Failed to update parcel payment status.", error: error.message });
             }
         });
+
+        app.patch('/parcel/:id/rider', async (req, res) => {
+            try {
+                const parcelId = new ObjectId(req.params.id);
+                const delivery_status = req.body?.delivery_status;
+                const result = await parcelsCollection.updateOne(
+                    { _id: parcelId },
+                    {
+                        $set: {
+                            delivery_status,
+                            updated_at: new Date().toISOString(),
+                        }
+                    }
+                )
+                res.send(result);
+
+            } catch (error) {
+                console.error("Error updating parcel payment status:", error);
+                res.status(500).json({ message: "Failed to update parcel payment status.", error: error.message });
+            }
+        });
+
+        // app.patch('/parcels/:id/rider', async (req, res) => {
+        //     try {
+        //         if (!parcelsCollection) {
+        //             return res.status(503).json({ message: "Database not connected or 'parcelsCollection' not initialized yet." });
+        //         }
+
+        //         const parcelId = req.params.id;
+        //         // Destructure the body to get delivery_status, and optionally assigned_rider_id/name
+        //         const { delivery_status, assigned_rider_id, assigned_rider_name } = req.body;
+
+        //         // 2. Prepare Update Fields
+        //         let updateFields = {
+        //             updatedAt: new Date() // Always update the timestamp
+        //         };
+
+        //         // Add rider assignment fields if provided
+        //         // This makes the endpoint more versatile for "assigning a rider" and "updating status"
+        //         if (assigned_rider_id) {
+        //             // Optional: Validate if assigned_rider_id is a valid ObjectId if you store it as ObjectId in DB
+        //             // if (!ObjectId.isValid(assigned_rider_id)) {
+        //             //     return res.status(400).json({ message: "Invalid assigned_rider_id format." });
+        //             // }
+        //             updateFields.assigned_rider_id = assigned_rider_id;
+        //         }
+        //         if (assigned_rider_name) {
+        //             updateFields.assigned_rider_name = assigned_rider_name;
+        //         }
+
+        //         // Ensure at least one update field is present besides updatedAt
+        //         if (Object.keys(updateFields).length === 1 && updateFields.updatedAt) {
+        //             return res.status(400).json({ message: "No valid fields to update. Please provide 'delivery_status', 'assigned_rider_id', or 'assigned_rider_name'." });
+        //         }
+
+        //         const objectId = new ObjectId(parcelId);
+
+        //         // 3. Perform Update
+        //         const updateResult = await parcelsCollection.findOneAndUpdate(
+        //             { _id: objectId },
+        //             { $set: updateFields },
+        //             { returnDocument: 'after' } // Returns the modified document
+        //         );
+
+        //         // 5. Send Success Response
+        //         res.status(200).json({
+        //             message: "Parcel updated successfully!",
+        //             parcel: updateResult.value // Return the updated parcel document
+        //         });
+
+        //     } catch (error) {
+        //         console.error("Error updating parcel:", error);
+        //         res.status(500).json({ message: "Failed to update parcel.", error: error.message });
+        //     }
+        // });
+
+        app.patch('/parcels/:parcelId/assign', async (req, res) => {
+            try {
+                if (!parcelsCollection) {
+                    return res.status(503).json({ message: "Database not connected or 'parcelCollections' not initialized yet." });
+                }
+                const parcelId = req.params.parcelId;
+                const { delivery_status, assigned_rider_id, assigned_rider_name } = req.body;
+
+                //update parcel
+                const updateParcel = await parcelsCollection.updateOne(
+                    { _id: new ObjectId(parcelId) },
+                    {
+                        $set: {
+                            delivery_status,
+                            assigned_rider_id,
+                            assigned_rider_name,
+                        }
+                    },
+                );
+                const updateRider = await ridersCollection.updateOne(
+                    { _id: new ObjectId(assigned_rider_id) },
+                    {
+                        $set: {
+                            work_status: 'in_delivery',
+                        }
+                    }
+                );
+
+
+                res.send({ updateParcel, updateRider });
+
+            } catch (error) {
+                console.error("Error retrieving paid and not collected parcels:", error);
+                res.status(500).json({ message: "Failed to retrieve parcels.", error: error.message });
+            }
+        })
 
         app.delete('/parcels/:id', async (req, res) => {
             try {
