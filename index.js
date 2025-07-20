@@ -316,7 +316,39 @@ async function run() {
             }
         });
 
-        app.get('/parcels/rider/:riderId/assigned', async (req, res) => {
+        app.get('/parcels/rider/:userId/assigned', async (req, res) => {
+            try {
+                if (!parcelsCollection) {
+                    return res.status(503).json({ message: "Database not connected or 'parcelsCollection' not initialized yet." });
+                }
+                const userId = req.params.userId;
+                // console.log(riderId)
+                const queryForUser = { _id: new ObjectId(userId) };
+                const userResult = await usersCollection.findOne(queryForUser);
+                // console.log()
+                // Construct the query
+                const query = {
+                    assign_rider_email: userResult.email,
+                    delivery_status: { $in: ['rider_assigned', 'in_transit'] }
+                };
+                // console.log(query)
+                // Find parcels matching the query, sorted by creation date (latest first)
+                const parcels = await parcelsCollection.find(query).sort({ createdAt: -1 }).toArray();
+                // console.log(parcels)
+                // If no parcels are found, return 404
+                if (parcels.length === 0) {
+                    return res.status(200).json(parcels);
+                }
+
+                res.status(200).json(parcels);
+
+            } catch (error) {
+                console.error("Error retrieving assigned parcels for rider:", error);
+                res.status(500).json({ message: "Failed to retrieve assigned parcels.", error: error.message });
+            }
+        });
+
+        app.get('/parcels/rider/:riderId/delivered', async (req, res) => {
             try {
                 if (!parcelsCollection) {
                     return res.status(503).json({ message: "Database not connected or 'parcelsCollection' not initialized yet." });
@@ -329,7 +361,7 @@ async function run() {
                 // Construct the query
                 const query = {
                     assign_rider_email: user.email,
-                    delivery_status: { $in: ['rider_assign', 'in_transit'] } // Match either status
+                    delivery_status: { $in: ['delivered', 'delivered_to_wire_house'] } // Match either status
                 };
 
                 // Find parcels matching the query, sorted by creation date (latest first)
@@ -337,7 +369,7 @@ async function run() {
 
                 // If no parcels are found, return 404
                 if (parcels.length === 0) {
-                    return res.status(404).json({ message: "No parcels found for this rider with 'rider_assign' or 'in_transit' status." });
+                    return res.status(200).json(parcels);
                 }
 
                 res.status(200).json(parcels);
@@ -432,17 +464,51 @@ async function run() {
             }
         });
 
+        app.patch('/parcels/:id/update', async (req, res) => {
+            try {
+                const query = new ObjectId(req.params?.id);
+                const updateData = req.body;
+                console.log(query, updateData);
+                const result = await parcelsCollection.updateOne(
+                    { _id: query },
+                    {
+                        $set: updateData
+                    }
+                );
+                res.send(result);
+
+            } catch (error) {
+                console.error("Error Updating parcel:", error);
+                res.status(500).json({ message: "Failed to update parcel.", error: error.message });
+            }
+        });
+
+        // Updata parcel dat 
         app.patch('/parcel/:id/rider', async (req, res) => {
             try {
                 const parcelId = new ObjectId(req.params.id);
                 const delivery_status = req.body?.delivery_status;
+
+                const query = {
+                    delivery_status,
+                    updated_at: new Date().toISOString(),
+                }
+
+                if (delivery_status === 'in_transit') {
+                    query.picked_up_at = new Date().toISOString();
+                }
+                if (delivery_status === 'delivered_to_wire_house') {
+                    query.delivered_to_wire_house_at = new Date().toISOString();
+                }
+                if (delivery_status === 'delivered') {
+                    query.delivery_at = new Date().toISOString();
+                }
+
+
                 const result = await parcelsCollection.updateOne(
                     { _id: parcelId },
                     {
-                        $set: {
-                            delivery_status,
-                            updated_at: new Date().toISOString(),
-                        }
+                        $set: query,
                     }
                 )
                 res.send(result);
@@ -523,6 +589,7 @@ async function run() {
                             delivery_status,
                             assigned_rider_id,
                             assigned_rider_name,
+                            rider_assign_time: new Date().toISOString(),
                         }
                     },
                 );
